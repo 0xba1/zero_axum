@@ -6,10 +6,12 @@ use axum::Form;
 use serde::Deserialize;
 use sqlx::PgPool;
 
+use crate::domain::NewSubscriber;
+
 #[derive(Deserialize)]
 pub struct FormData {
-    email: String,
-    name: String,
+    pub email: String,
+    pub name: String,
 }
 
 #[tracing::instrument(
@@ -21,22 +23,32 @@ pub struct FormData {
     )
 )]
 pub async fn subscribe(State(pool): State<Arc<PgPool>>, Form(form): Form<FormData>) -> StatusCode {
-    match insert_subscriber(pool.as_ref(), &form).await {
+    let new_subscriber = match form.try_into() {
+        Ok(new_subscriber) => new_subscriber,
+        Err(_) => return StatusCode::BAD_REQUEST,
+    };
+    match insert_subscriber(pool.as_ref(), &new_subscriber).await {
         Ok(_) => StatusCode::OK,
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }
 
-#[tracing::instrument("Saving new subscriber details in the database", skip(form, pool))]
-pub async fn insert_subscriber(pool: &PgPool, form: &FormData) -> Result<(), sqlx::Error> {
+#[tracing::instrument(
+    "Saving new subscriber details in the database",
+    skip(new_subscriber, pool)
+)]
+pub async fn insert_subscriber(
+    pool: &PgPool,
+    new_subscriber: &NewSubscriber,
+) -> Result<(), sqlx::Error> {
     sqlx::query!(
         r#"
     INSERT INTO subscriptions (id, email, name, subscribed_at)
     VALUES ($1, $2, $3, $4)
     "#,
         uuid::Uuid::new_v4(),
-        form.email,
-        form.name,
+        new_subscriber.email.as_ref(),
+        new_subscriber.name.as_ref(),
         chrono::Utc::now()
     )
     .execute(pool)
