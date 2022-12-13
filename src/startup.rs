@@ -17,7 +17,7 @@ use tracing::Level;
 use crate::{
     configuration::{DatabaseSettings, Settings},
     email_client::EmailClient,
-    routes::{health_check, subscribe},
+    routes::{confirm, health_check, subscribe},
 };
 
 pub struct Application {
@@ -50,7 +50,7 @@ impl Application {
 
         let listener = TcpListener::bind(&address)?;
         tracing::debug!("Listening on {}", &address);
-        let router = get_router(db_pool, email_client);
+        let router = get_router(db_pool, email_client, configuration.application.base_url);
 
         Ok(Self { listener, router })
     }
@@ -70,13 +70,23 @@ impl Application {
 pub fn get_connection_pool(configuration: &DatabaseSettings) -> PgPool {
     PgPoolOptions::new()
         .acquire_timeout(std::time::Duration::from_secs(2))
-        .connect_lazy_with(configuration.without_db())
+        .connect_lazy_with(configuration.with_db())
 }
 
-pub fn get_router(db_pool: PgPool, email_client: EmailClient) -> Router<(), Body> {
+#[derive(Clone)]
+pub struct ApplicationBaseUrl(pub String);
+
+pub fn get_router(
+    db_pool: PgPool,
+    email_client: EmailClient,
+    base_url: String,
+) -> Router<(), Body> {
     Router::new()
         .route("/health_check", get(health_check))
         .route("/subscriptions", post(subscribe))
+        .route("/subscriptions/confirm", get(confirm))
+        .layer(Extension(email_client))
+        .layer(Extension(ApplicationBaseUrl(base_url)))
         .layer(
             // from https://docs.rs/tower-http/0.2.5/tower_http/request_id/index.html#using-trace
             ServiceBuilder::new()
@@ -92,6 +102,5 @@ pub fn get_router(db_pool: PgPool, email_client: EmailClient) -> Router<(), Body
                 )
                 .propagate_x_request_id(),
         )
-        .layer(Extension(email_client))
         .with_state(Arc::new(db_pool))
 }
