@@ -9,7 +9,7 @@ use sqlx::{postgres::PgPoolOptions, PgPool};
 use tower::ServiceBuilder;
 use tower_http::{
     request_id::MakeRequestUuid,
-    trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer},
+    trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer},
     ServiceBuilderExt,
 };
 use tracing::Level;
@@ -17,7 +17,7 @@ use tracing::Level;
 use crate::{
     configuration::{DatabaseSettings, Settings},
     email_client::EmailClient,
-    routes::{confirm, health_check, subscribe},
+    routes::{confirm, health_check, publish_newsletter, subscribe},
 };
 
 pub struct Application {
@@ -85,6 +85,7 @@ pub fn get_router(
         .route("/health_check", get(health_check))
         .route("/subscriptions", post(subscribe))
         .route("/subscriptions/confirm", get(confirm))
+        .route("/newsletters", post(publish_newsletter))
         .layer(Extension(email_client))
         .layer(Extension(ApplicationBaseUrl(base_url)))
         .layer(
@@ -98,6 +99,7 @@ pub fn get_router(
                                 .include_headers(true)
                                 .level(Level::INFO),
                         )
+                        .on_request(DefaultOnRequest::new())
                         .on_response(DefaultOnResponse::new().include_headers(true)),
                 )
                 .propagate_x_request_id(),
