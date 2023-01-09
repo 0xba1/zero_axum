@@ -12,8 +12,9 @@ path = "src/main.rs"
 name = "zero_axum"
 
 [dependencies]
-axum = "0.6.1"
-hyper = "0.14.23"
+argon2 = { version = "0.4", features = ["std"] }
+axum = "0.6"
+hyper = "0.14"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", default-features = false, features = [
     "macros",
@@ -29,15 +30,15 @@ tracing-bunyan-formatter = "0.3"
 tracing-log = "0.1"
 tower-http = { version = "0.3", features = ["trace", "request-id"] }
 secrecy = { version = "0.8", features = ["serde"] }
-tower = "0.4.13"
-serde-aux = "4.1.2"
-unicode-segmentation = "1.10.0"
-validator = "0.16.0"
+tower = "0.4"
+serde-aux = "4.1"
+unicode-segmentation = "1.10"
+validator = "0.16"
 rand = { version = "0.8", features = ["std_rng"] }
-thiserror = "1.0.37"
+thiserror = "1.0"
 anyhow = "1.0.66"
-base64 = "0.20.0"
-sha3 = "0.10.6"
+base64 = "0.20"
+sha3 = "0.10"
 
 
 [dependencies.sqlx]
