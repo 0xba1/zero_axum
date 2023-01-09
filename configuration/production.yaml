@@ -4,5 +4,5 @@ database:
   require_ssl: true
 email_client:
   base_url: "https://api.postmarkapp.com"
-  sender_email: "boluwatife.a@caspiands.com"
+  sender_email: "boluwatife.ma@gmail.com"
   authorization_token: "f325fa85-d95d-4b9f-91e6-8cef3467c0e0"
