@@ -1,12 +1,12 @@
 use std::{sync::Arc, fmt::Display};
 
-use axum::{extract::State, response::{Redirect, IntoResponse, Response}, Form, Extension};
-use hmac::{Hmac, Mac};
+use axum::{extract::State, response::{Redirect, IntoResponse, Response}, Form};
+use axum_flash::Flash;
 use hyper::{StatusCode, Body, header::LOCATION};
-use secrecy::{Secret, ExposeSecret};
+use secrecy::{Secret};
 use sqlx::PgPool;
 
-use crate::{routes::{Credentials, validate_credentials, error_chain_fmt}, authentication::AuthError, startup::HmacSecret};
+use crate::{routes::{Credentials, validate_credentials, error_chain_fmt}, authentication::AuthError, startup::AppState,};
 
 #[derive(serde::Deserialize)]
 pub struct FormData {
@@ -15,17 +15,17 @@ pub struct FormData {
 }
 
 #[tracing::instrument(
-    skip(form, pool, secret), 
+    skip(form, app_state, flash), 
     fields(username=tracing::field::Empty, user_id=tracing::field::Empty)
 )]
-pub async fn login(State(pool): State<Arc<PgPool>>, Extension(secret): Extension<HmacSecret>, Form(form): Form<FormData>, )
- -> Result<Redirect, LoginErrorWithHmacSecret> {
+pub async fn login(flash: Flash, State(app_state): State<AppState>, Form(form): Form<FormData>, )
+ -> Result<Redirect, LoginErrorWithFlash> {
     let credentials = Credentials {
         username: form.username,
         password: form.password,
     };
     
-    match validate_credentials(credentials, &pool).await {
+    match validate_credentials(credentials, &app_state.db_pool).await {
         Ok(user_id) => {
             tracing::Span::current()
             .record("user_id", &tracing::field::display(&user_id));
@@ -49,8 +49,8 @@ pub async fn login(State(pool): State<Arc<PgPool>>, Extension(secret): Extension
             //     mac.update(query_string.as_bytes());
             //     mac.finalize().into_bytes()
             // };
-            // Err(e)
-            Err(LoginErrorWithHmacSecret::new(e, secret))
+            Err(LoginErrorWithFlash::new(e, flash))
+            // Err(LoginErrorWithHmacSecret::new(e, secret))
         }
     }
 
@@ -80,35 +80,27 @@ impl std::fmt::Debug for LoginError {
     }
 }
 
-impl LoginError {
-    fn to_statuscode(&self) -> StatusCode {
-        // match &self {
-        //     LoginError::AuthError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-        //     LoginError::UnexpectedError(_) => StatusCode::UNAUTHORIZED,
-        // }
-        StatusCode::SEE_OTHER
-    }
-}
+
 
 
 #[derive(thiserror::Error)]
-pub struct LoginErrorWithHmacSecret {
+pub struct LoginErrorWithFlash {
     login_error: LoginError,
-    hmac_secret: HmacSecret,
+    cookie_flash: Flash,
 }
 
-impl LoginErrorWithHmacSecret {
-    fn new(login_error: LoginError, hmac_secret: HmacSecret) -> Self {
-        Self { login_error, hmac_secret }
+impl LoginErrorWithFlash {
+    fn new(login_error: LoginError, cookie_flash: Flash) -> Self {
+        Self { login_error, cookie_flash }
     }
 }
-impl Display for LoginErrorWithHmacSecret {
+impl Display for LoginErrorWithFlash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Display::fmt(&self.login_error, f)
     }
 }
 
-impl std::fmt::Debug for LoginErrorWithHmacSecret {
+impl std::fmt::Debug for LoginErrorWithFlash{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Debug::fmt(&self.login_error, f)
     }
@@ -116,31 +108,32 @@ impl std::fmt::Debug for LoginErrorWithHmacSecret {
 
 
 
-impl IntoResponse for LoginErrorWithHmacSecret {
+impl IntoResponse for LoginErrorWithFlash {
     fn into_response(self) -> Response {
-        let status_code = self.login_error.to_statuscode();
+       
+        (
+            self.cookie_flash.error(self.login_error.to_string()), 
+            Redirect::to("/login"),
+        ).into_response()
+    }
+}
 
-        let query_string = format!("error={}", urlencoding::Encoded::new(self.login_error.to_string()));
 
-     
 
-        let hmac_tag = {
-            let mut mac = Hmac::<sha2::Sha256>::new_from_slice(self.hmac_secret.0.expose_secret().as_bytes()).unwrap();
-            mac.update(query_string.as_bytes());
-            mac.finalize().into_bytes()
-        };
+impl IntoResponse for LoginError{
+    fn into_response(self) -> Response {
 
         let mut response = Response::builder().status(StatusCode::SEE_OTHER).body(Body::empty()).unwrap();
+        
+        
 
         let headers = response.headers_mut();
 
-        // let encoded_error = urlencoding::Encoded::new(self.login_error.to_string());
         headers.insert(LOCATION, "/login".parse().unwrap());
 
-        headers.insert("Set-Cookie", format!("_flash={}", self.login_error).parse().unwrap());
+        headers.insert("Set-Cookie", format!("_flash={self}; Max-Age=0").parse().unwrap());
 
-        (status_code, response).into_response()
-        // (status_code, Redirect::to(&format!("/login?error={query_string}&tag={hmac_tag:x}"))).into_response()
+        response.into_response()
         
     }
 }

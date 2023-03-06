@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use anyhow::Context;
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use axum::{
@@ -13,25 +11,25 @@ use sqlx::PgPool;
 
 use crate::{
     authentication::AuthError, domain::SubscriberEmail, email_client::EmailClient,
-    telemetry::spawn_blocking_with_tracing,
+    startup::AppState, telemetry::spawn_blocking_with_tracing,
 };
 
 use super::error_chain_fmt;
 
 #[tracing::instrument(
     name = "Publish a newsletter issue",
-    skip(body, pool, email_client, headers),
+    skip(body, app_state, email_client, headers),
     fields(username=tracing::field::Empty, user_id=tracing::field::Empty)
 )]
 pub async fn publish_newsletter(
     Extension(email_client): Extension<EmailClient>,
-    State(pool): State<Arc<PgPool>>,
+    State(app_state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<BodyData>,
 ) -> Result<StatusCode, PublishError> {
     let credentials = basic_authentication(&headers).map_err(PublishError::AuthError)?;
     tracing::Span::current().record("username", &tracing::field::display(&credentials.username));
-    let user_id = validate_credentials(credentials, &pool)
+    let user_id = validate_credentials(credentials, &app_state.db_pool)
         .await
         .map_err(|e| match e {
             AuthError::InvalidCredentials(_) => PublishError::AuthError(e.into()),
@@ -39,7 +37,7 @@ pub async fn publish_newsletter(
         })?;
     tracing::Span::current().record("user_id", &tracing::field::display(&user_id));
 
-    let subscribers = get_confirmed_subscribers(&pool).await?;
+    let subscribers = get_confirmed_subscribers(&app_state.db_pool).await?;
     for subscriber in subscribers {
         match subscriber {
             Ok(subscriber) => {

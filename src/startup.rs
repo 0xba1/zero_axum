@@ -1,12 +1,14 @@
 use std::{net::TcpListener, sync::Arc};
 
 use axum::{
+    extract::FromRef,
     routing::{get, post},
     Extension, Router,
 };
+use axum_flash::Key;
 use hyper::Body;
-use secrecy::Secret;
-use sqlx::{postgres::PgPoolOptions, PgPool};
+use secrecy::{ExposeSecret, Secret};
+use sqlx::{postgres::PgPoolOptions, PgPool, Pool, Postgres};
 use tower::ServiceBuilder;
 use tower_http::{
     request_id::MakeRequestUuid,
@@ -88,6 +90,11 @@ pub fn get_router(
     base_url: String,
     hmac_secret: Secret<String>,
 ) -> Router<(), Body> {
+    let flash_config = axum_flash::Config::new(Key::from(hmac_secret.expose_secret().as_bytes()));
+    let app_state = AppState {
+        db_pool: Arc::new(db_pool),
+        flash_config,
+    };
     Router::new()
         .route("/", get(home))
         .route("/health_check", get(health_check))
@@ -98,7 +105,6 @@ pub fn get_router(
         .route("/newsletters", post(publish_newsletter))
         .layer(Extension(email_client))
         .layer(Extension(ApplicationBaseUrl(base_url)))
-        .layer(Extension(HmacSecret(hmac_secret)))
         .layer(
             // from https://docs.rs/tower-http/0.2.5/tower_http/request_id/index.html#using-trace
             ServiceBuilder::new()
@@ -115,8 +121,20 @@ pub fn get_router(
                 )
                 .propagate_x_request_id(),
         )
-        .with_state(Arc::new(db_pool))
+        .with_state(app_state)
 }
 
 #[derive(Clone)]
 pub struct HmacSecret(pub Secret<String>);
+
+#[derive(Clone, Debug)]
+pub struct AppState {
+    pub db_pool: Arc<Pool<Postgres>>,
+    flash_config: axum_flash::Config,
+}
+
+impl FromRef<AppState> for axum_flash::Config {
+    fn from_ref(state: &AppState) -> axum_flash::Config {
+        state.flash_config.clone()
+    }
+}

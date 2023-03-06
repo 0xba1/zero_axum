@@ -13,7 +13,7 @@ name = "zero_axum"
 
 [dependencies]
 argon2 = { version = "0.4", features = ["std"] }
-axum = "0.6"
+axum = { version = "0.6" }
 hyper = "0.14"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", default-features = false, features = [
@@ -43,6 +43,7 @@ htmlescape = "0.3"
 hmac = { version = "0.12", features = ["std"] }
 sha2 = "0.10.6"
 hex = "0.4"
+axum-flash = "0.6.0"
 
 
 [dependencies.sqlx]

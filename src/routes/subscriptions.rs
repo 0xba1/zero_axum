@@ -12,7 +12,7 @@ use sqlx::{PgPool, Postgres, Transaction};
 
 use crate::domain::NewSubscriber;
 use crate::email_client::EmailClient;
-use crate::startup::ApplicationBaseUrl;
+use crate::startup::{AppState, ApplicationBaseUrl};
 
 #[derive(Deserialize)]
 pub struct FormDatax {
@@ -22,14 +22,15 @@ pub struct FormDatax {
 
 #[allow(clippy::async_yields_async)]
 pub async fn subscribe(
-    State(pool): State<Arc<PgPool>>,
+    State(app_state): State<AppState>,
     Extension(email_client): Extension<EmailClient>,
     Extension(ApplicationBaseUrl(base_url)): Extension<ApplicationBaseUrl>,
     Form(form): Form<FormDatax>,
 ) -> Result<(), SubscribeError> {
     let new_subscriber = form.try_into()?;
 
-    let mut transaction = pool
+    let mut transaction = app_state
+        .db_pool
         .begin()
         .await
         .context("Failed to acquire a Postgres connection from the pool")?;

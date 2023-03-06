@@ -1,43 +1,23 @@
-use axum::extract::Query;
 use axum::http::Response;
 use axum::http::StatusCode;
-use axum::Extension;
-use hmac::{Hmac, Mac};
-use secrecy::ExposeSecret;
+use axum::response::IntoResponse;
+use axum_flash::IncomingFlashes;
+use axum_flash::Level;
+use std::fmt::Write;
 
-use crate::startup::HmacSecret;
+pub async fn login_form(flash_messages: IncomingFlashes) -> impl IntoResponse {
+    let mut error_html = String::new();
+    for m in flash_messages.iter().filter(|m| m.0 == Level::Error) {
+        writeln!(error_html, "<p><i>{}</i></p>", m.1).unwrap();
+    }
 
-#[derive(serde::Deserialize)]
-pub struct QueryParams {
-    error: String,
-    tag: String,
-}
-
-pub async fn login_form(
-    query: Option<Query<QueryParams>>,
-    secret: Extension<HmacSecret>,
-) -> Response<String> {
-    let error_html = match query {
-        Some(query) => match query.0.verify(&secret) {
-            Ok(error) => {
-                format!("<p><i>{}</i></p>", htmlescape::encode_minimal(&error))
-            }
-            Err(e) => {
-                tracing::warn!(
-                    error.message = %e,
-                    error.cause_chain = ?e,
-                    "Failed to verify query parameters using HMAC tag"
-                );
-                "".into()
-            }
-        },
-        None => "".to_string(),
-    };
-    Response::builder()
-        .status(StatusCode::OK)
-        .header("Content-Type", "text/html; charset=utf-8")
-        .body(format!(
-            r#"<!DOCTYPE html>
+    (
+        flash_messages,
+        Response::builder()
+            .status(StatusCode::OK)
+            .header("Content-Type", "text/html; charset=utf-8")
+            .body(format!(
+                r#"<!DOCTYPE html>
 <html lang="en">
 
 <head>
@@ -59,22 +39,8 @@ pub async fn login_form(
 </body>
 
 </html>
-                "#
-        ))
-        .unwrap()
-}
-
-impl QueryParams {
-    fn verify(self, secret: &HmacSecret) -> Result<String, anyhow::Error> {
-        let tag = hex::decode(&self.tag)?;
-        let query_string = format!("error={}", urlencoding::Encoded::new(&self.error));
-
-        let mut mac =
-            Hmac::<sha2::Sha256>::new_from_slice(secret.0.expose_secret().as_bytes()).unwrap();
-
-        mac.update(query_string.as_bytes());
-        mac.verify_slice(&tag)?;
-
-        Ok(self.error)
-    }
+                "#,
+            ))
+            .unwrap(),
+    )
 }

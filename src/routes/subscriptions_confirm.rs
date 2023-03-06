@@ -7,6 +7,8 @@ use axum::{
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::startup::AppState;
+
 #[derive(serde::Deserialize)]
 pub struct Parameters {
     pub subscription_token: String,
@@ -15,9 +17,11 @@ pub struct Parameters {
 #[tracing::instrument(name = "Confirm a pending subscriber", skip(parameters))]
 pub async fn confirm(
     Query(parameters): Query<Parameters>,
-    State(pool): State<Arc<PgPool>>,
+    State(app_state): State<AppState>,
 ) -> StatusCode {
-    let id = match get_subscriber_id_from_token(&pool, &parameters.subscription_token).await {
+    let id = match get_subscriber_id_from_token(&app_state.db_pool, &parameters.subscription_token)
+        .await
+    {
         Ok(id) => id,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
     };
@@ -25,7 +29,10 @@ pub async fn confirm(
     match id {
         None => StatusCode::UNAUTHORIZED,
         Some(subscriber_id) => {
-            if confirm_subscriber(&pool, subscriber_id).await.is_err() {
+            if confirm_subscriber(&app_state.db_pool, subscriber_id)
+                .await
+                .is_err()
+            {
                 return StatusCode::INTERNAL_SERVER_ERROR;
             }
             StatusCode::OK
