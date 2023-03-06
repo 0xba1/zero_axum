@@ -5,6 +5,7 @@ use axum::{
     Extension, Router,
 };
 use hyper::Body;
+use secrecy::Secret;
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use tower::ServiceBuilder;
 use tower_http::{
@@ -17,7 +18,7 @@ use tracing::Level;
 use crate::{
     configuration::{DatabaseSettings, Settings},
     email_client::EmailClient,
-    routes::{confirm, health_check, publish_newsletter, subscribe},
+    routes::{confirm, health_check, home, login, login_form, publish_newsletter, subscribe},
 };
 
 pub struct Application {
@@ -49,8 +50,13 @@ impl Application {
         );
 
         let listener = TcpListener::bind(&address)?;
-        tracing::debug!("Listening on {}", &address);
-        let router = get_router(db_pool, email_client, configuration.application.base_url);
+        tracing::info!("Listening on {}", &address);
+        let router = get_router(
+            db_pool,
+            email_client,
+            configuration.application.base_url,
+            configuration.application.hmac_secret,
+        );
 
         Ok(Self { listener, router })
     }
@@ -80,14 +86,19 @@ pub fn get_router(
     db_pool: PgPool,
     email_client: EmailClient,
     base_url: String,
+    hmac_secret: Secret<String>,
 ) -> Router<(), Body> {
     Router::new()
+        .route("/", get(home))
         .route("/health_check", get(health_check))
+        .route("/login", get(login_form))
+        .route("/login", post(login))
         .route("/subscriptions", post(subscribe))
         .route("/subscriptions/confirm", get(confirm))
         .route("/newsletters", post(publish_newsletter))
         .layer(Extension(email_client))
         .layer(Extension(ApplicationBaseUrl(base_url)))
+        .layer(Extension(HmacSecret(hmac_secret)))
         .layer(
             // from https://docs.rs/tower-http/0.2.5/tower_http/request_id/index.html#using-trace
             ServiceBuilder::new()
@@ -106,3 +117,6 @@ pub fn get_router(
         )
         .with_state(Arc::new(db_pool))
 }
+
+#[derive(Clone)]
+pub struct HmacSecret(pub Secret<String>);
