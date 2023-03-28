@@ -2,12 +2,11 @@ use axum::http::Response;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum_flash::IncomingFlashes;
-use axum_flash::Level;
 use std::fmt::Write;
 
 pub async fn login_form(flash_messages: IncomingFlashes) -> impl IntoResponse {
     let mut error_html = String::new();
-    for m in flash_messages.iter().filter(|m| m.0 == Level::Error) {
+    for m in flash_messages.iter() {
         writeln!(error_html, "<p><i>{}</i></p>", m.1).unwrap();
     }
 

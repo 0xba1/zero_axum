@@ -1,12 +1,11 @@
-use std::{sync::Arc, fmt::Display};
+use std::fmt::Display;
 
-use axum::{extract::State, response::{Redirect, IntoResponse, Response}, Form};
+use axum::{extract::State, response::{Redirect, IntoResponse, Response, ErrorResponse}, Form};
 use axum_flash::Flash;
-use hyper::{StatusCode, Body, header::LOCATION};
-use secrecy::{Secret};
-use sqlx::PgPool;
+use hyper::{StatusCode, header::LOCATION, Body};
+use secrecy::Secret;
 
-use crate::{routes::{Credentials, validate_credentials, error_chain_fmt}, authentication::AuthError, startup::AppState,};
+use crate::{routes::{ error_chain_fmt}, authentication::{AuthError, Credentials, validate_credentials}, startup::AppState, session_state::TypedSession,};
 
 #[derive(serde::Deserialize)]
 pub struct FormData {
@@ -14,12 +13,14 @@ pub struct FormData {
     password: Secret<String>,
 }
 
+pub const USER_ID_KEY: &str = "user_id";
+
 #[tracing::instrument(
     skip(form, app_state, flash), 
     fields(username=tracing::field::Empty, user_id=tracing::field::Empty)
 )]
-pub async fn login(flash: Flash, State(app_state): State<AppState>, Form(form): Form<FormData>, )
- -> Result<Redirect, LoginErrorWithFlash> {
+pub async fn login(mut session: TypedSession, flash: Flash, State(app_state): State<AppState>, Form(form): Form<FormData>, )
+ -> Result<Redirect, ErrorResponse> {
     let credentials = Credentials {
         username: form.username,
         password: form.password,
@@ -29,7 +30,10 @@ pub async fn login(flash: Flash, State(app_state): State<AppState>, Form(form): 
         Ok(user_id) => {
             tracing::Span::current()
             .record("user_id", &tracing::field::display(&user_id));
-            Ok(Redirect::to("/"))
+
+        session.renew().await;
+        session.insert_user_id(user_id).await.map_err(|e| login_redirect(LoginError::UnexpectedError(e.into()), flash))?;
+            Ok(Redirect::to("/admin/dashboard"))
         }
         Err(e) => {
             let e = match e {
@@ -49,21 +53,10 @@ pub async fn login(flash: Flash, State(app_state): State<AppState>, Form(form): 
             //     mac.update(query_string.as_bytes());
             //     mac.finalize().into_bytes()
             // };
-            Err(LoginErrorWithFlash::new(e, flash))
-            // Err(LoginErrorWithHmacSecret::new(e, secret))
+            Err(login_redirect(e, flash))
         }
     }
 
-    // let user_id = validate_credentials(credentials, &pool)
-    //     .await
-    //     .map_err(|e| match e {
-    //         AuthError::InvalidCredentials(_) => LoginError::AuthError(e.into()),
-    //         AuthError::UnexpectedError(_) => LoginError::UnexpectedError(e.into()),
-    //     })?;
-
-    // tracing::Span::current().record("user_id", &tracing::field::display(&user_id));
-    
-    // Ok(Redirect::to("/")) 
 }
 
 #[derive(thiserror::Error)]
@@ -138,3 +131,10 @@ impl IntoResponse for LoginError{
     }
 }
 
+// Redirect to the login page with an error message.
+fn login_redirect(e: LoginError, cookie_flash: Flash) -> ErrorResponse {
+    (
+        cookie_flash.error(e.to_string()), 
+        Redirect::to("/login"),
+    ).into()
+}

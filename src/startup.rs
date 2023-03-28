@@ -1,11 +1,13 @@
 use std::{net::TcpListener, sync::Arc};
 
+use async_redis_session::RedisSessionStore;
 use axum::{
     extract::FromRef,
     routing::{get, post},
     Extension, Router,
 };
 use axum_flash::Key;
+use axum_sessions::SessionLayer;
 use hyper::Body;
 use secrecy::{ExposeSecret, Secret};
 use sqlx::{postgres::PgPoolOptions, PgPool, Pool, Postgres};
@@ -20,7 +22,10 @@ use tracing::Level;
 use crate::{
     configuration::{DatabaseSettings, Settings},
     email_client::EmailClient,
-    routes::{confirm, health_check, home, login, login_form, publish_newsletter, subscribe},
+    routes::{
+        admin_dashboard, change_password, change_password_form, confirm, health_check, home,
+        log_out, login, login_form, publish_newsletter, subscribe,
+    },
 };
 
 pub struct Application {
@@ -58,6 +63,7 @@ impl Application {
             email_client,
             configuration.application.base_url,
             configuration.application.hmac_secret,
+            configuration.application.redis_uri,
         );
 
         Ok(Self { listener, router })
@@ -89,22 +95,31 @@ pub fn get_router(
     email_client: EmailClient,
     base_url: String,
     hmac_secret: Secret<String>,
+    redis_uri: Secret<String>,
 ) -> Router<(), Body> {
-    let flash_config = axum_flash::Config::new(Key::from(hmac_secret.expose_secret().as_bytes()));
+    let secret_key = hmac_secret.expose_secret().as_bytes();
+    let flash_config = axum_flash::Config::new(Key::from(secret_key));
     let app_state = AppState {
         db_pool: Arc::new(db_pool),
         flash_config,
     };
+    let redis_store = RedisSessionStore::new(redis_uri.expose_secret().as_str()).unwrap();
+    let session_layer = SessionLayer::new(redis_store, secret_key);
     Router::new()
         .route("/", get(home))
         .route("/health_check", get(health_check))
         .route("/login", get(login_form))
         .route("/login", post(login))
+        .route("/admin/logout", post(log_out))
         .route("/subscriptions", post(subscribe))
         .route("/subscriptions/confirm", get(confirm))
         .route("/newsletters", post(publish_newsletter))
+        .route("/admin/dashboard", get(admin_dashboard))
+        .route("/admin/password", get(change_password_form))
+        .route("/admin/password", post(change_password))
         .layer(Extension(email_client))
         .layer(Extension(ApplicationBaseUrl(base_url)))
+        .layer(session_layer)
         .layer(
             // from https://docs.rs/tower-http/0.2.5/tower_http/request_id/index.html#using-trace
             ServiceBuilder::new()
